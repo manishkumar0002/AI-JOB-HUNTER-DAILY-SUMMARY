@@ -1,0 +1,32 @@
+# Environment file containing sensitive API keys and db passwords
+.env
+
+# Resume PDF (contains private personal data)
+resumes/*
+!resumes/.gitkeep
+
+# Exclude generated reports and logs
+reports/*
+!reports/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Python caching
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

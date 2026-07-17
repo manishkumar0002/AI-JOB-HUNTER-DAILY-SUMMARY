@@ -1,0 +1,151 @@
+{
+  "name": "LinkedIn Posts Job Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      },
+      "id": "n8n-trigger-schedule",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// LinkedIn Post Search Keywords for India fresher jobs\nconst keywords = [\n  'hiring java fresher india',\n  'we are hiring software engineer 0-2 years india',\n  'java full stack developer bangalore hiring',\n  'associate software engineer india opening',\n  'intern software developer india apply',\n  'spring boot developer fresher india'\n];\n\n// Return keywords as separate items\nreturn keywords.map(kw => ({ json: { keyword: kw } }));"
+      },
+      "id": "n8n-keywords-code",
+      "name": "Define Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.linkedin.com/search/results/content/?keywords={{ encodeURIComponent($json.keyword) }}&origin=SWITCH_SEARCH_VERTICAL&sortBy=date_posted",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "li_at=YOUR_LI_AT_COOKIE_HERE"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n8n-http-linkedin",
+      "name": "Fetch LinkedIn Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LinkedIn post search results HTML\nconst html = $input.item.json.data || $input.item.json.body || '';\nconst keyword = $input.item.json.keyword || '';\n\n// Email regex\nconst emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g;\n// Hiring patterns\nconst hiringPatterns = /hiring|we.?re hiring|job opening|apply now|looking for|opportunity|fresher|intern|vacancy/i;\n// India location\nconst indiaPattern = /india|bangalore|bengaluru|pune|hyderabad|chennai|mumbai|noida|gurugram|delhi|kolkata|indore|remote/i;\n// Senior filter\nconst seniorPattern = /\\b([5-9]|10|\\d{2})\\+?\\s*(years?|yrs?)\\s*(of\\s+)?experience\\b|senior\\b|lead\\b|staff\\b/i;\n\nconst results = [];\n\n// Extract text blocks from HTML (simple approach)\nconst textBlocks = html.match(/<[^>]+>(.*?)<\\/[^>]+>/gs) || [];\nconst cleanTexts = textBlocks\n  .map(b => b.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim())\n  .filter(t => t.length > 100 && hiringPatterns.test(t));\n\nfor (const text of cleanTexts.slice(0, 10)) {\n  if (seniorPattern.test(text)) continue;\n  if (!indiaPattern.test(text) && !text.toLowerCase().includes('remote')) continue;\n  \n  const emails = text.match(emailRegex) || [];\n  const locationMatch = text.match(indiaPattern);\n  const location = locationMatch ? locationMatch[0] : 'India';\n  \n  results.push({\n    title: 'Software Engineer / Developer (LinkedIn Post)',\n    company_name: 'Startup / Company (LinkedIn Post)',\n    location: location.charAt(0).toUpperCase() + location.slice(1),\n    description: text.substring(0, 2000),\n    recruiter_email: emails.length > 0 ? emails[0] : null,\n    apply_url: `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(keyword)}&sortBy=date_posted`,\n    platform: 'LinkedIn Post',\n    source_type: 'linkedin_post',\n    experience: '0-2 Years'\n  });\n}\n\nreturn results.map(r => ({ json: r }));"
+      },
+      "id": "n8n-parse-posts",
+      "name": "Parse Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.recruiter_email }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "n8n-filter-email",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/api/jobs/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "n8n-ingest-job",
+      "name": "Save to Job Hunter DB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "toEmail": "manishkumar.workspace@gmail.com",
+        "subject": "=🚀 New LinkedIn Hiring Post Found: {{ $json.title }} at {{ $json.company_name }}",
+        "emailType": "html",
+        "message": "=<html><body style='font-family:Arial,sans-serif;'><h2>🎯 New Hiring Post Detected!</h2><p><strong>Title:</strong> {{ $json.title }}</p><p><strong>Company:</strong> {{ $json.company_name }}</p><p><strong>Location:</strong> {{ $json.location }}</p><p><strong>Recruiter Email:</strong> <a href='mailto:{{ $json.recruiter_email }}'>{{ $json.recruiter_email }}</a></p><p><strong>Apply/Source:</strong> <a href='{{ $json.apply_url }}'>Click Here</a></p><hr/><p><strong>Post Text:</strong></p><pre style='background:#f5f5f5;padding:10px;'>{{ $json.description }}</pre><br/><a href='http://localhost:8000' style='background:#6366f1;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;'>View Dashboard</a></body></html>",
+        "options": {}
+      },
+      "id": "n8n-email-alert",
+      "name": "Email Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1340, 380],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-cred-1",
+          "name": "Gmail OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [[{ "node": "Define Keywords", "type": "main", "index": 0 }]]
+    },
+    "Define Keywords": {
+      "main": [[{ "node": "Fetch LinkedIn Posts", "type": "main", "index": 0 }]]
+    },
+    "Fetch LinkedIn Posts": {
+      "main": [[{ "node": "Parse Posts", "type": "main", "index": 0 }]]
+    },
+    "Parse Posts": {
+      "main": [[{ "node": "Has Email?", "type": "main", "index": 0 }]]
+    },
+    "Has Email?": {
+      "main": [
+        [{ "node": "Save to Job Hunter DB", "type": "main", "index": 0 }],
+        [{ "node": "Save to Job Hunter DB", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save to Job Hunter DB": {
+      "main": [[{ "node": "Email Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": ["job-hunter", "linkedin", "automation"]
+}

@@ -1,0 +1,213 @@
+{
+  "name": "AI Job Hunter Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e0bfa923-5e7e-43be-8c10-090c8a5a40bb",
+      "name": "Schedule Trigger (Daily 8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        380,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/resume/parse",
+        "options": {}
+      },
+      "id": "e30e6205-0210-449e-b9b5-77ffc2e176df",
+      "name": "HTTP Request - Parse Resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        240
+      ],
+      "retryOnFail": true,
+      "maxRetries": 3,
+      "delayBetweenRetries": 5000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/jobs/scrape",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "c62fb2df-7ab3-4700-a010-0b7b134d6ee1",
+      "name": "HTTP Request - Scrape Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        820,
+        240
+      ],
+      "retryOnFail": true,
+      "maxRetries": 2,
+      "delayBetweenRetries": 10000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/jobs/ats-match",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "42f9e4bd-12c8-4a92-be22-dfa6a1253457",
+      "name": "HTTP Request - ATS Matching",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1040,
+        240
+      ],
+      "retryOnFail": true,
+      "maxRetries": 2,
+      "delayBetweenRetries": 10000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/reports/excel",
+        "options": {}
+      },
+      "id": "be5f70a5-f843-4cc0-9289-e16fae54050d",
+      "name": "HTTP Request - Generate Excel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1260,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/notifications/send",
+        "options": {}
+      },
+      "id": "18f9e612-e565-4f40-8798-e76fae54060e",
+      "name": "HTTP Request - Send Notifications",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1480,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "e843c0a5-f892-4cc0-9289-e16fae54050d",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        600,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/health",
+        "options": {}
+      },
+      "id": "18e9a6bc-e565-4f40-8798-e76fae54060e",
+      "name": "Log Error to Worker Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        820,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Daily 8 AM)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Parse Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Parse Resume": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Scrape Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Scrape Jobs": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - ATS Matching",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - ATS Matching": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Generate Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Generate Excel": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Send Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Worker Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionTimeout": 3600
+  },
+  "meta": {
+    "templateId": ""
+  }
+}

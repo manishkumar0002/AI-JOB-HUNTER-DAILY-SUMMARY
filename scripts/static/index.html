@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Job Hunter — India Dashboard</title>
+  <meta name="description" content="AI-powered fresher & 0-2 year experience job tracker for India — LinkedIn, career pages, posts scraped daily." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🤖</span>
+        <div>
+          <span class="logo-title">AI Job Hunter</span>
+          <span class="logo-sub">India · Fresher &amp; 0-2 Yrs</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btn-run-pipeline" class="btn btn-primary" onclick="runPipeline()">
+          <span class="btn-icon">⚡</span> Refresh Jobs
+        </button>
+        <button class="btn btn-outline" onclick="downloadReport()">
+          <span class="btn-icon">📥</span> Excel Report
+        </button>
+        <label class="btn btn-outline" for="resume-upload-input">
+          <span class="btn-icon">📄</span> Upload Resume
+        </label>
+        <input type="file" id="resume-upload-input" accept=".pdf,.txt" style="display:none" onchange="uploadResume(this)" />
+      </div>
+    </div>
+  </header>
+
+  <!-- STATS BAR -->
+  <section class="stats-bar" id="stats-bar">
+    <div class="stat-card" id="stat-live">
+      <div class="stat-number" id="stat-live-val">—</div>
+      <div class="stat-label">🔴 Live (24hrs)</div>
+    </div>
+    <div class="stat-card" id="stat-total">
+      <div class="stat-number" id="stat-total-val">—</div>
+      <div class="stat-label">📦 Total Jobs</div>
+    </div>
+    <div class="stat-card highlight-green" id="stat-applied">
+      <div class="stat-number" id="stat-applied-val">—</div>
+      <div class="stat-label">✅ Applied</div>
+    </div>
+    <div class="stat-card highlight-blue" id="stat-interview">
+      <div class="stat-number" id="stat-interview-val">—</div>
+      <div class="stat-label">🎯 Interviews</div>
+    </div>
+    <div class="stat-card highlight-yellow" id="stat-offer">
+      <div class="stat-number" id="stat-offer-val">—</div>
+      <div class="stat-label">🏆 Offers</div>
+    </div>
+    <div class="stat-card highlight-red" id="stat-rejected">
+      <div class="stat-number" id="stat-rejected-val">—</div>
+      <div class="stat-label">❌ Rejected</div>
+    </div>
+    <div class="stat-card highlight-gray" id="stat-notmatch">
+      <div class="stat-number" id="stat-notmatch-val">—</div>
+      <div class="stat-label">🚫 Not Match</div>
+    </div>
+    <div class="stat-card highlight-purple" id="stat-ats">
+      <div class="stat-number" id="stat-ats-val">—</div>
+      <div class="stat-label">🤖 Avg ATS Score</div>
+    </div>
+  </section>
+
+  <!-- PIPELINE STATUS TOAST -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- DUAL TAB SWITCHER -->
+    <div class="tab-switcher">
+      <button class="tab-btn active" id="tab-live-btn" onclick="switchTab('live')">
+        <span class="tab-dot live-dot"></span>
+        🔴 Live Feed <span class="tab-badge" id="live-badge">0</span>
+      </button>
+      <button class="tab-btn" id="tab-archive-btn" onclick="switchTab('archive')">
+        📁 Archive &amp; Tracking <span class="tab-badge" id="archive-badge">0</span>
+      </button>
+      <div class="tab-refresh-info" id="refresh-info">Auto-refreshes every 30 min</div>
+    </div>
+
+    <!-- ── LIVE TAB ── -->
+    <div id="tab-live" class="tab-panel active">
+      <div class="filters-row">
+        <input type="text" id="live-search" placeholder="🔍 Search jobs, companies, locations..." class="search-input" oninput="debounceSearch('live')" />
+        <select id="live-source-filter" class="filter-select" onchange="loadLiveJobs()">
+          <option value="all">All Sources</option>
+          <option value="linkedin_jobs">💼 LinkedIn Jobs</option>
+          <option value="linkedin_post">📢 LinkedIn Posts</option>
+          <option value="career_page">🏢 Career Pages</option>
+        </select>
+        <select id="live-ats-filter" class="filter-select" onchange="loadLiveJobs()">
+          <option value="all">All ATS Scores</option>
+          <option value="high">🟢 High (80+)</option>
+          <option value="medium">🟡 Medium (50-79)</option>
+          <option value="low">🔴 Low (&lt;50)</option>
+        </select>
+      </div>
+      <div id="live-jobs-grid" class="jobs-grid">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading live job listings...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ARCHIVE TAB ── -->
+    <div id="tab-archive" class="tab-panel hidden">
+      <div class="filters-row">
+        <input type="text" id="archive-search" placeholder="🔍 Search archived jobs..." class="search-input" oninput="debounceSearch('archive')" />
+        <select id="archive-status-filter" class="filter-select" onchange="loadArchiveJobs()">
+          <option value="all">All Statuses</option>
+          <option value="Not Applied">🔵 Not Applied</option>
+          <option value="Applied">✅ Applied</option>
+          <option value="Interview Scheduled">🎯 Interview Scheduled</option>
+          <option value="Offer Received">🏆 Offer Received</option>
+          <option value="Rejected">❌ Rejected</option>
+          <option value="Not Match">🚫 Not Match</option>
+        </select>
+        <select id="archive-sort" class="filter-select" onchange="loadArchiveJobs()">
+          <option value="ats">Sort: ATS Score</option>
+          <option value="date">Sort: Date</option>
+          <option value="company">Sort: Company</option>
+        </select>
+      </div>
+      <div id="archive-jobs-grid" class="jobs-grid">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading archived job listings...</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- JOB DETAIL MODAL -->
+  <div id="job-modal" class="modal-overlay hidden" onclick="closeModal(event)">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeJobModal()">✕</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
