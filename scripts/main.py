@@ -12,7 +12,14 @@ from shutil import copyfileobj
 from scripts.database import get_db_session, Job, ResumeVersion
 from scripts.logger import log_info, log_error, log_warning, log_performance
 from scripts.resume_parser import extract_text_from_pdf, parse_resume_with_ollama, save_resume_version
-from scripts.company_scraper import run_scraper_pipeline
+from scripts.company_scraper import (
+    run_scraper_pipeline,
+    run_linkedin_jobs_pipeline,
+    run_linkedin_posts_pipeline,
+    run_youtube_pipeline,
+    run_google_companies_pipeline,
+    run_other_boards_pipeline
+)
 from scripts.ats_matcher import match_job_id
 from scripts.excel_generator import generate_daily_excel
 from scripts.telegram import send_telegram_summary
@@ -379,6 +386,89 @@ async def scrape_jobs(db: Session = Depends(get_db_session)):
         }
     except Exception as e:
         log_error(f"Job scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Scrape YouTube API
+@app.post("/jobs/scrape/youtube")
+async def scrape_youtube(db: Session = Depends(get_db_session)):
+    try:
+        start_time = datetime.datetime.now()
+        jobs = await run_youtube_pipeline(db)
+        duration = (datetime.datetime.now() - start_time).total_seconds()
+        log_performance(f"Scraped {len(jobs)} YouTube jobs in {duration:.2f}s")
+        return {"status": "success", "jobs_scraped": len(jobs)}
+    except Exception as e:
+        log_error(f"YouTube job scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Scrape Google Companies API
+@app.post("/jobs/scrape/google-companies")
+async def scrape_google_companies(db: Session = Depends(get_db_session)):
+    try:
+        start_time = datetime.datetime.now()
+        jobs = await run_google_companies_pipeline(db)
+        duration = (datetime.datetime.now() - start_time).total_seconds()
+        log_performance(f"Scraped {len(jobs)} Google Company jobs in {duration:.2f}s")
+        return {"status": "success", "jobs_scraped": len(jobs)}
+    except Exception as e:
+        log_error(f"Google Company job scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Scrape LinkedIn Jobs API
+@app.post("/jobs/scrape/linkedin-jobs")
+async def scrape_linkedin_jobs(db: Session = Depends(get_db_session)):
+    try:
+        start_time = datetime.datetime.now()
+        jobs = await run_linkedin_jobs_pipeline(db)
+        duration = (datetime.datetime.now() - start_time).total_seconds()
+        log_performance(f"Scraped {len(jobs)} LinkedIn jobs in {duration:.2f}s")
+        return {"status": "success", "jobs_scraped": len(jobs)}
+    except Exception as e:
+        log_error(f"LinkedIn job scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Scrape LinkedIn Posts API
+@app.post("/jobs/scrape/linkedin-posts")
+async def scrape_linkedin_posts(db: Session = Depends(get_db_session)):
+    try:
+        start_time = datetime.datetime.now()
+        jobs = await run_linkedin_posts_pipeline(db)
+        duration = (datetime.datetime.now() - start_time).total_seconds()
+        log_performance(f"Scraped {len(jobs)} LinkedIn Post jobs in {duration:.2f}s")
+        return {"status": "success", "jobs_scraped": len(jobs)}
+    except Exception as e:
+        log_error(f"LinkedIn Post job scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Scrape Other Job Boards API
+@app.post("/jobs/scrape/other-boards")
+async def scrape_other_boards(db: Session = Depends(get_db_session)):
+    try:
+        start_time = datetime.datetime.now()
+        jobs = await run_other_boards_pipeline(db)
+        duration = (datetime.datetime.now() - start_time).total_seconds()
+        log_performance(f"Scraped {len(jobs)} Other Boards jobs in {duration:.2f}s")
+        return {"status": "success", "jobs_scraped": len(jobs)}
+    except Exception as e:
+        log_error(f"Other Job Boards scraping failure: {e}", "WorkerAPI")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Match and Notify API
+@app.post("/jobs/match-and-notify")
+def match_and_notify_pipeline(db: Session = Depends(get_db_session)):
+    try:
+        log_info("Match and Notify pipeline initiated.", "Pipeline")
+        ats_res = ats_match_jobs(db=db)
+        excel_res = generate_report(db=db)
+        notify_res = send_notifications(db=db)
+        return {
+            "status": "success",
+            "ats_matching": ats_res,
+            "excel_report": excel_res,
+            "notifications": notify_res
+        }
+    except Exception as e:
+        log_error(f"Match and Notify pipeline failure: {e}", "WorkerAPI")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Match Jobs API

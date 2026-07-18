@@ -222,3 +222,162 @@ async def scrape_company_career_pages() -> list:
 
     log_info(f"Career Pages scraper complete. Found {len(all_jobs)} job listings.", "CareerScraper")
     return all_jobs
+
+
+def _dork_company_search(company_name: str, domain: str) -> list:
+    """
+    Performs a Bing search for fresher jobs at a specific company domain.
+    """
+    import urllib.parse
+    
+    # Clean domain
+    base_domain = domain
+    if domain.startswith("www."):
+        base_domain = domain[4:]
+        
+    query = f'site:{base_domain} "Software" OR "Developer" OR "Engineer" AND ("fresher" OR "0-2 years" OR "Graduate" OR "Trainee" OR "Intern") AND "India"'
+    search_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    
+    jobs = []
+    try:
+        log_info(f"Dorking company '{company_name}' on domain '{base_domain}'...", "CareerScraper")
+        response = requests.get(search_url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = soup.find_all('li', class_='b_algo')
+        
+        seen_urls = set()
+        for r in results:
+            a = r.find('a')
+            if not a:
+                continue
+            href = a.get('href')
+            if href and href.startswith('http') and base_domain in href:
+                href_clean = href.split('?')[0].split('#')[0].strip()
+                if href_clean in seen_urls:
+                    continue
+                seen_urls.add(href_clean)
+                
+                title_text = a.get_text(separator=" ", strip=True)
+                title_lower = title_text.lower()
+                
+                if SENIOR_RE.search(title_lower):
+                    continue
+                    
+                ROLE_NOUNS = ["developer", "engineer", "intern", "trainee", "analyst", "associate", "programmer", "specialist"]
+                if not any(noun in title_lower for noun in ROLE_NOUNS):
+                    continue
+                    
+                skip_keywords = ["services", "insights", "expertise", "about", "contact", "news", "press", "media", "blog", 
+                                 "solutions", "privacy", "investors"]
+                if any(kw in href_clean.lower() or kw in title_lower for kw in skip_keywords):
+                    continue
+                
+                # Resolve link
+                try:
+                    head_resp = requests.head(href_clean, headers=headers, timeout=8, allow_redirects=True)
+                    if head_resp.status_code == 200:
+                        final_url = head_resp.url
+                    else:
+                        final_url = href_clean
+                except Exception:
+                    final_url = href_clean
+                        
+                jobs.append({
+                    "title": title_text.strip().title() if len(title_text) > 5 else "Software Engineer",
+                    "company_name": company_name,
+                    "location": "India",
+                    "description": f"Discovered via search engine query for {company_name} fresher jobs. Title: {title_text}",
+                    "recruiter_email": None,
+                    "apply_url": final_url,
+                    "platform": "Google Search",
+                    "source_type": "career_page",
+                    "experience": "0-2 Years",
+                })
+                
+        if not jobs:
+            # Fallback scan of all anchors
+            anchors = soup.find_all('a')
+            for a in anchors:
+                href = a.get('href')
+                if href and href.startswith('http') and base_domain in href:
+                    href_clean = href.split('?')[0].split('#')[0].strip()
+                    if href_clean in seen_urls:
+                        continue
+                    seen_urls.add(href_clean)
+                    
+                    title_text = a.get_text(separator=" ", strip=True)
+                    title_lower = title_text.lower()
+                    
+                    if SENIOR_RE.search(title_lower):
+                        continue
+                    ROLE_NOUNS = ["developer", "engineer", "intern", "trainee", "analyst", "associate", "programmer", "specialist"]
+                    if not any(noun in title_lower for noun in ROLE_NOUNS):
+                        continue
+                    skip_keywords = ["services", "insights", "expertise", "about", "contact", "news", "press", "media", "blog", 
+                                     "solutions", "privacy", "investors"]
+                    if any(kw in href_clean.lower() or kw in title_lower for kw in skip_keywords):
+                        continue
+                        
+                    final_url = href_clean
+                    try:
+                        head_resp = requests.head(href_clean, headers=headers, timeout=8, allow_redirects=True)
+                        if head_resp.status_code == 200:
+                            final_url = head_resp.url
+                    except Exception:
+                        pass
+                        
+                    jobs.append({
+                        "title": title_text.strip().title() if len(title_text) > 5 else "Software Engineer",
+                        "company_name": company_name,
+                        "location": "India",
+                        "description": f"Discovered via search engine query for {company_name} fresher jobs. Title: {title_text}",
+                        "recruiter_email": None,
+                        "apply_url": final_url,
+                        "platform": "Google Search",
+                        "source_type": "career_page",
+                        "experience": "0-2 Years",
+                    })
+    except Exception as e:
+        log_error(f"Failed search dorking for {company_name}: {e}", "CareerScraper")
+        
+    return jobs
+
+
+async def scrape_google_company_jobs() -> list:
+    """
+    Main entry point: dork search engines for SDE fresher positions at each company.
+    """
+    from urllib.parse import urlparse
+    log_info("Starting Google/Bing company dorking scraper...", "CareerScraper")
+    all_jobs = []
+    seen_urls = set()
+    
+    # Query up to 15 companies per run to avoid search engine blockages
+    # Using a subset or checking list
+    for company_info in COMPANY_CAREER_PAGES[:25]:
+        company_name = company_info["company"]
+        url = company_info["url"]
+        
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        if not domain:
+            continue
+            
+        jobs = _dork_company_search(company_name, domain)
+        for job in jobs:
+            apply_url = job["apply_url"]
+            if apply_url not in seen_urls:
+                seen_urls.add(apply_url)
+                all_jobs.append(job)
+                
+        time.sleep(2.5)
+        
+    log_info(f"Google/Bing company dorking complete. Found {len(all_jobs)} jobs.", "CareerScraper")
+    return all_jobs

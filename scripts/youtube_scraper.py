@@ -140,126 +140,140 @@ def _is_india_job(text: str) -> bool:
     return True  # assume India if no location mentioned
 
 
-def _extract_apply_link(description: str) -> str | None:
-    """Extracts only the actual direct job apply URL from description, ignoring social/promo links."""
-    all_links = re.findall(r'https?://[^\s\)\]\"\'\>]+', description)
-    
+known_companies = [
+    "Google", "Microsoft", "Amazon", "Adobe", "Oracle", "SAP", "IBM", "Infosys", "TCS", "Accenture", 
+    "Capgemini", "Cognizant", "L&T", "Mphasis", "Hexaware", "Persistent", "Zensar", "Razorpay", 
+    "Freshworks", "Zoho", "PhonePe", "Swiggy", "Zomato", "CRED", "Groww", "Meesho", "BrowserStack", 
+    "Postman", "Chargebee", "Juspay", "Lenskart", "Slice", "Open Financial", "Darwinbox", "MoEngage", 
+    "CleverTap", "Whatfix", "Exotel", "RazorThink", "Haptik", "Ola", "Rapido", "Zendesk", 
+    "ThoughtWorks", "Cummins", "Amdocs", "ITC Infotech", "Medi-Tech", "MakeMyTrip", "Nagarro", 
+    "KPIT", "Cyient", "Mastercard", "NVIDIA", "Intel", "Qualcomm", "Cisco", "VMware", "Atlassian"
+]
+
+
+def _parse_jobs_from_description(video: dict, description: str) -> list:
+    """
+    Parses a YouTube video description and extracts ALL external job links.
+    For each link, resolves the matching company and job title from surrounding lines.
+    """
+    title = video.get("title", "")
+    full_text = f"{title}\n{description}"
+
+    if not _is_india_job(full_text):
+        return []
+
+    # Find all URLs in description
+    all_urls = re.findall(r'https?://[^\s\)\]\"\'\>]+', description)
+
     # Filter out social/channel/course promotion links
-    filtered_links = []
     social_domains = [
         "youtube.com", "youtu.be", "instagram.com", "facebook.com", "twitter.com", "x.com", 
         "telegram.me", "t.me", "linkedin.com/in/", "linkedin.com/company/", "github.com",
         "whatsapp.com", "chat.whatsapp.com", "play.google.com", "apple.co", "subscribe", 
         "course", "playlist", "tutorial", "skillsagency.com/java-course"
     ]
-    for link in all_links:
-        link_lower = link.lower()
-        if not any(domain in link_lower for domain in social_domains):
-            # Clean trailing punctuation
-            link = re.sub(r'[.,;:]+$', '', link)
-            filtered_links.append(link)
 
-    # Step 1: Look for labeled links line-by-line
-    lines = description.split('\n')
-    for line in lines:
-        line_lower = line.lower()
-        if any(w in line_lower for w in ["apply", "register", "registration", "form", "link to", "job link", "apply here"]):
-            urls = re.findall(r'https?://[^\s\)\]\"\'\>]+', line)
-            for u in urls:
-                cleaned_u = re.sub(r'[.,;:]+$', '', u)
-                if cleaned_u in filtered_links:
-                    return cleaned_u
+    unique_urls = []
+    for url in all_urls:
+        url_clean = re.sub(r'[.,;:]+$', '', url)
+        url_lower = url_clean.lower()
+        if not any(domain in url_lower for domain in social_domains):
+            if url_clean not in unique_urls:
+                unique_urls.append(url_clean)
 
-    # Step 2: Look for high-priority domains (forms.gle, lever, greenhouse, unstop, etc.)
-    priority_domains = ["forms.gle", "docs.google.com/forms", "lever.co", "greenhouse.io", 
-                        "myworkdayjobs.com", "unstop.com", "internshala.com", "naukri.com", "linkedin.com/jobs"]
-    for link in filtered_links:
-        link_lower = link.lower()
-        if any(domain in link_lower for domain in priority_domains):
-            return link
-
-    # Step 3: Look for links with bit.ly, tinyurl, linktr.ee, careers, jobs
-    medium_domains = ["bit.ly", "tinyurl.com", "careers", "jobs", "apply", "form"]
-    for link in filtered_links:
-        link_lower = link.lower()
-        if any(domain in link_lower for domain in medium_domains):
-            return link
-
-    # Step 4: Return first remaining link if any
-    if filtered_links:
-        return filtered_links[0]
-
-    return None
-
-
-def _parse_job_from_description(video: dict, description: str) -> dict | None:
-    """
-    Parses a YouTube video description into a structured job dict.
-    Returns None if not a valid India entry-level job.
-    """
-    title = video.get("title", "")
-    full_text = f"{title}\n{description}"
-
-    if not _is_india_job(full_text):
-        return None
-    if SENIOR_RE.search(full_text):
-        return None
-
-    # Must look like a hiring post
-    hiring_keywords = ["hiring", "we are hiring", "job opening", "apply", "fresher", "intern", "opportunity", "vacancy"]
-    if not any(kw in full_text.lower() for kw in hiring_keywords):
-        return None
-
-    # Extract apply link
-    apply_url = _extract_apply_link(description)
-    if not apply_url:
-        # If no apply link found in description, skip saving it to avoid incorrect URLs
-        return None
+    if not unique_urls:
+        return []
 
     # Extract emails
     emails = list(set(EMAIL_REGEX.findall(full_text)))
+    recruiter_email = ", ".join(emails) if emails else None
 
-    # Extract location
-    location = "India"
-    loc_match = INDIA_RE.search(full_text)
-    if loc_match:
-        location = loc_match.group(1).title()
+    jobs = []
+    lines = description.split('\n')
 
-    # Job title: try to extract from description, fallback to video title
-    job_title = title.strip()
-    title_match = re.search(
-        r'(?:position|role|title)[:\s]+([A-Za-z ]{5,60}(?:developer|engineer|intern|trainee|analyst|associate))',
-        full_text, re.IGNORECASE
-    )
-    if title_match:
-        job_title = title_match.group(1).strip().title()
+    for url in unique_urls:
+        # Find the line containing this URL
+        line_idx = -1
+        for idx, line in enumerate(lines):
+            if url in line:
+                line_idx = idx
+                break
 
-    # Company name
-    company = "Unknown (YouTube)"
-    company_match = re.search(r'(?:at|@|company)[:\s]+([A-Za-z0-9 &\-\.]{3,40})', full_text, re.IGNORECASE)
-    if company_match:
-        c = company_match.group(1).strip()
-        if len(c) > 2:
-            company = c
+        context_lines = []
+        if line_idx != -1:
+            if line_idx > 0:
+                context_lines.append(lines[line_idx - 1])
+            context_lines.append(lines[line_idx])
 
-    return {
-        "title": job_title[:200],
-        "company_name": company,
-        "location": location,
-        "description": full_text[:3000],
-        "recruiter_email": ", ".join(emails) if emails else None,
-        "apply_url": apply_url,
-        "platform": "YouTube",
-        "source_type": "youtube",
-        "experience": "0-2 Years",
-        "posted_date": None,
-    }
+        context_text = " ".join(context_lines)
+
+        # Exclude senior roles based on context text
+        if SENIOR_RE.search(context_text):
+            continue
+
+        # 1. Determine company name
+        company = None
+        for kc in known_companies:
+            if re.search(rf'\b{re.escape(kc)}\b', context_text, re.IGNORECASE):
+                company = kc
+                break
+
+        if not company and line_idx != -1:
+            current_line = lines[line_idx]
+            match = re.search(
+                r'^\s*(?:\d+[\.\-\)]\s*)?([A-Za-z0-9\s&]+?)(?:\s*(?:apply|link|registration|form|sde|role|hiring|job|careers?|recruitment|here))*\s*[:\-–—]\s*https?', 
+                current_line, re.IGNORECASE
+            )
+            if match:
+                c_cand = match.group(1).strip()
+                c_cand = re.sub(r'^\s*[\*\-#•]+\s*', '', c_cand)
+                if len(c_cand) > 2 and len(c_cand) < 40 and not any(w in c_cand.lower() for w in ["apply", "link", "click"]):
+                    company = c_cand
+
+        if not company:
+            title_company_match = re.search(r'(?:at|@|company)[:\s]+([A-Za-z0-9 &\-\.]{3,40})', title, re.IGNORECASE)
+            if title_company_match:
+                company = title_company_match.group(1).strip()
+            else:
+                company = "Various (YouTube)"
+
+        # 2. Determine job title
+        job_title = None
+        title_match = re.search(
+            r'([A-Za-z ]{5,60}(?:developer|engineer|intern|trainee|analyst|associate))',
+            context_text, re.IGNORECASE
+        )
+        if title_match:
+            job_title = title_match.group(1).strip().title()
+        else:
+            job_title = "Software Engineer"
+
+        # 3. Determine location
+        location = "India"
+        loc_match = INDIA_RE.search(context_text + " " + title)
+        if loc_match:
+            location = loc_match.group(1).title()
+
+        jobs.append({
+            "title": job_title[:200],
+            "company_name": company,
+            "location": location,
+            "description": f"Extracted from YouTube Video: {title}\n\nContext lines:\n{context_text[:1000]}",
+            "recruiter_email": recruiter_email,
+            "apply_url": url,
+            "platform": "YouTube",
+            "source_type": "youtube",
+            "experience": "0-2 Years",
+            "posted_date": None,
+        })
+
+    return jobs
 
 
 async def scrape_youtube_hiring_videos() -> list:
     """
     Main entry: searches YouTube for India fresher hiring videos and
-    extracts job info from their descriptions.
+    extracts ALL job apply links from their descriptions.
     """
     log_info("Starting YouTube Hiring Description Scraper...", "YouTubeScraper")
     all_jobs = []
@@ -276,21 +290,20 @@ async def scrape_youtube_hiring_videos() -> list:
             seen_video_ids.add(vid)
 
             # Try to parse from snippet first (faster)
-            snippet_job = _parse_job_from_description(video, video.get("snippet", ""))
-            if snippet_job and snippet_job.get("recruiter_email"):
-                # Good enough from snippet alone
-                all_jobs.append(snippet_job)
+            snippet_jobs = _parse_jobs_from_description(video, video.get("snippet", ""))
+            if snippet_jobs and any(j.get("recruiter_email") for j in snippet_jobs):
+                all_jobs.extend(snippet_jobs)
                 continue
 
             # Fetch full description for better extraction
             desc = _fetch_video_description(vid)
             if desc:
-                job = _parse_job_from_description(video, desc)
-                if job:
-                    all_jobs.append(job)
+                jobs = _parse_jobs_from_description(video, desc)
+                all_jobs.extend(jobs)
             time.sleep(1.5)  # polite delay
 
         time.sleep(3)
 
     log_info(f"YouTube scraper complete. Found {len(all_jobs)} India hiring opportunities.", "YouTubeScraper")
     return all_jobs
+

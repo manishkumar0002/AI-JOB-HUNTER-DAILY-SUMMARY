@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import urllib.parse
 import datetime
 import asyncio
@@ -128,18 +129,194 @@ def _save_jobs_to_db(db: Session, job_list: list, source_label: str) -> int:
     return saved
 
 
-async def run_scraper_pipeline(db: Session) -> list:
+def _dork_search(board_or_company_name: str, domain_filter: str, query: str, is_board: bool = False) -> list:
     """
-    Orchestrates the full scraping pipeline:
-    1. LinkedIn Guest Job Search API (last 24hrs)
-    2. LinkedIn Post Scraper (startup hiring posts)
-    3. Company Career Pages Scraper (~50 Indian companies)
-    4. YouTube Hiring Video Description Scraper
+    Performs Bing search queries for fresher jobs targeting a specific board or company domain.
     """
-    log_info("Starting LinkedIn Guest API search pipeline...", "Scraper")
-    all_scraped = []
+    import urllib.parse
+    from bs4 import BeautifulSoup
+    import requests
+    import re
+    
+    search_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    
+    jobs = []
+    SENIOR_FILTER_RE = re.compile(
+        r'\b([3-9]|10|\d{2})\+?\s*(years?|yrs?)\b|\bsenior\b|\blead\b|\bstaff\b|\bprincipal\b|\bmanager\b',
+        re.IGNORECASE
+    )
+    try:
+        log_info(f"Dorking '{board_or_company_name}' on Bing with query: '{query}'...", "Scraper")
+        response = requests.get(search_url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = soup.find_all('li', class_='b_algo')
+        
+        seen_urls = set()
+        for r in results:
+            a = r.find('a')
+            if not a:
+                continue
+            href = a.get('href')
+            if href and href.startswith('http') and domain_filter in href:
+                href_clean = href.split('?')[0].split('#')[0].strip()
+                if href_clean in seen_urls:
+                    continue
+                seen_urls.add(href_clean)
+                
+                title_text = a.get_text(separator=" ", strip=True)
+                title_lower = title_text.lower()
+                
+                if SENIOR_FILTER_RE.search(title_lower):
+                    continue
+                    
+                ROLE_NOUNS = ["developer", "engineer", "intern", "trainee", "analyst", "associate", "programmer", "specialist"]
+                if not any(noun in title_lower for noun in ROLE_NOUNS):
+                    continue
+                    
+                skip_keywords = ["services", "insights", "expertise", "about", "contact", "news", "press", "media", "blog", 
+                                 "solutions", "privacy", "investors"]
+                if any(kw in href_clean.lower() or kw in title_lower for kw in skip_keywords):
+                    continue
+                    
+                cleaned_title = title_text.split("Job")[0].split("Recruitment")[0].split("Hiring")[0].strip()
+                cleaned_title = re.sub(r'\s*\|\s*.*$', '', cleaned_title)
+                if len(cleaned_title) < 5:
+                    cleaned_title = "Software Engineer"
+                    
+                # Resolve final URL to handle redirects
+                final_url = href_clean
+                try:
+                    head_resp = requests.head(href_clean, headers=headers, timeout=8, allow_redirects=True)
+                    if head_resp.status_code == 200:
+                        final_url = head_resp.url
+                except Exception:
+                    pass
+                    
+                if not is_board:
+                    company_name = board_or_company_name
+                else:
+                    company_name = "Various"
+                    comp_match = re.search(r'(?:at|@|company|in)[:\s]+([A-Za-z0-9 &\-\.]{3,40})', title_text, re.IGNORECASE)
+                    if comp_match:
+                        company_name = comp_match.group(1).strip()
+                    else:
+                        parts = title_text.split(" - ")
+                        if len(parts) > 1:
+                            company_name = parts[1].strip()
+                            
+                jobs.append({
+                    "title": cleaned_title[:200],
+                    "company_name": company_name[:200],
+                    "location": "India",
+                    "description": f"Discovered on {board_or_company_name} via search engine dorking. Title: {title_text}",
+                    "recruiter_email": None,
+                    "apply_url": final_url,
+                    "platform": board_or_company_name,
+                    "source_type": "job_board" if is_board else "career_page",
+                    "experience": "0-2 Years",
+                })
+                
+        if not jobs:
+            # Fallback scan of all anchors
+            anchors = soup.find_all('a')
+            for a in anchors:
+                href = a.get('href')
+                if href and href.startswith('http') and domain_filter in href:
+                    href_clean = href.split('?')[0].split('#')[0].strip()
+                    if href_clean in seen_urls:
+                        continue
+                    seen_urls.add(href_clean)
+                    
+                    title_text = a.get_text(separator=" ", strip=True)
+                    title_lower = title_text.lower()
+                    
+                    if SENIOR_FILTER_RE.search(title_lower):
+                        continue
+                    ROLE_NOUNS = ["developer", "engineer", "intern", "trainee", "analyst", "associate", "programmer", "specialist"]
+                    if not any(noun in title_lower for noun in ROLE_NOUNS):
+                        continue
+                    skip_keywords = ["services", "insights", "expertise", "about", "contact", "news", "press", "media", "blog", 
+                                     "solutions", "privacy", "investors"]
+                    if any(kw in href_clean.lower() or kw in title_lower for kw in skip_keywords):
+                        continue
+                        
+                    cleaned_title = title_text.split("Job")[0].split("Recruitment")[0].split("Hiring")[0].strip()
+                    cleaned_title = re.sub(r'\s*\|\s*.*$', '', cleaned_title)
+                    if len(cleaned_title) < 5:
+                        cleaned_title = "Software Engineer"
+                        
+                    final_url = href_clean
+                    try:
+                        head_resp = requests.head(href_clean, headers=headers, timeout=8, allow_redirects=True)
+                        if head_resp.status_code == 200:
+                            final_url = head_resp.url
+                    except Exception:
+                        pass
+                        
+                    if not is_board:
+                        company_name = board_or_company_name
+                    else:
+                        company_name = "Various"
+                        comp_match = re.search(r'(?:at|@|company|in)[:\s]+([A-Za-z0-9 &\-\.]{3,40})', title_text, re.IGNORECASE)
+                        if comp_match:
+                            company_name = comp_match.group(1).strip()
+                            
+                    jobs.append({
+                        "title": cleaned_title[:200],
+                        "company_name": company_name[:200],
+                        "location": "India",
+                        "description": f"Discovered on {board_or_company_name} via search engine dorking. Title: {title_text}",
+                        "recruiter_email": None,
+                        "apply_url": final_url,
+                        "platform": board_or_company_name,
+                        "source_type": "job_board" if is_board else "career_page",
+                        "experience": "0-2 Years",
+                    })
+    except Exception as e:
+        log_error(f"Failed search dorking for {board_or_company_name}: {e}", "Scraper")
+        
+    return jobs
 
-    # ── SOURCE 1: LinkedIn Guest Job Search ──────────────────────────────────
+
+async def scrape_other_job_boards() -> list:
+    """
+    Scrapes various job boards (Wellfound, YCombinator, Naukri, Indeed, Instahyre) via search engine dorking on Bing.
+    """
+    log_info("Starting Other Job Boards dorking scraper...", "Scraper")
+    
+    queries = [
+        {"name": "Naukri", "filter": "naukri.com", "query": 'site:naukri.com "Software Engineer" OR "Developer" "India" "fresher" OR "0-1 year"'},
+        {"name": "Indeed", "filter": "indeed.com", "query": 'site:indeed.com/viewjob OR site:indeed.com/rc/clk "Software Engineer" "India" "fresher"'},
+        {"name": "Wellfound", "filter": "wellfound.com", "query": 'site:wellfound.com/jobs "Software Engineer" "India" "fresher" OR "0-2 years"'},
+        {"name": "YCombinator", "filter": "ycombinator.com", "query": 'site:ycombinator.com/jobs "Software Engineer" "India" "fresher" OR "intern"'},
+        {"name": "Instahyre", "filter": "instahyre.com", "query": 'site:instahyre.com/jobs "Software Engineer" "India" "fresher" OR "0-2 years"'}
+    ]
+    
+    all_jobs = []
+    seen_urls = set()
+    
+    for q in queries:
+        jobs = _dork_search(q["name"], q["filter"], q["query"], is_board=True)
+        for job in jobs:
+            apply_url = job["apply_url"]
+            if apply_url not in seen_urls:
+                seen_urls.add(apply_url)
+                all_jobs.append(job)
+        time.sleep(2)
+        
+    log_info(f"Other Job Boards scraper complete. Found {len(all_jobs)} jobs.", "Scraper")
+    return all_jobs
+
+
+async def run_linkedin_jobs_pipeline(db: Session) -> list:
+    log_info("Starting LinkedIn Jobs scraping pipeline...", "Scraper")
     candidate_links = []
     seen_urls = set()
     for keyword in JOB_KEYWORDS[:5]:
@@ -167,110 +344,78 @@ async def run_scraper_pipeline(db: Session) -> list:
         linkedin_jobs.append(job_info)
         await asyncio.sleep(1.5)
 
-    saved_linkedin = _save_jobs_to_db(db, linkedin_jobs, "LinkedIn")
-    log_info(f"LinkedIn Jobs: {len(linkedin_jobs)} new entry-level jobs found, {saved_linkedin} saved.", "Scraper")
-    all_scraped.extend(linkedin_jobs)
+    saved = _save_jobs_to_db(db, linkedin_jobs, "LinkedIn")
+    log_info(f"LinkedIn Jobs complete. Saved {saved} new jobs.", "Scraper")
+    return linkedin_jobs
 
-    # ── SOURCE 2: LinkedIn Post Scraper ──────────────────────────────────────
+
+async def run_linkedin_posts_pipeline(db: Session) -> list:
+    log_info("Starting LinkedIn Posts scraping pipeline...", "Scraper")
     try:
         from scripts.linkedin_post_scraper import scrape_linkedin_posts
         post_jobs = await scrape_linkedin_posts()
         post_jobs_new = [j for j in post_jobs if not is_duplicate(db, j["company_name"], j["title"], j.get("location", ""), j["apply_url"])]
-        saved_posts = _save_jobs_to_db(db, post_jobs_new, "LinkedIn Post")
-        log_info(f"LinkedIn Posts: {len(post_jobs_new)} new job posts found, {saved_posts} saved.", "Scraper")
-        all_scraped.extend(post_jobs_new)
+        saved = _save_jobs_to_db(db, post_jobs_new, "LinkedIn Post")
+        log_info(f"LinkedIn Posts complete. Saved {saved} new jobs.", "Scraper")
+        return post_jobs_new
     except Exception as e:
         log_error(f"LinkedIn Post scraper failed: {e}", "Scraper")
+        return []
 
-    # ── SOURCE 3: Company Career Pages ───────────────────────────────────────
-    try:
-        from scripts.career_page_scraper import scrape_company_career_pages
-        career_jobs = await scrape_company_career_pages()
-        career_jobs_new = [j for j in career_jobs if not is_duplicate(db, j["company_name"], j["title"], j.get("location", ""), j["apply_url"])]
-        saved_career = _save_jobs_to_db(db, career_jobs_new, "Career Page")
-        log_info(f"Career Pages: {len(career_jobs_new)} new fresher jobs found, {saved_career} saved.", "Scraper")
-        all_scraped.extend(career_jobs_new)
-    except Exception as e:
-        log_error(f"Career Page scraper failed: {e}", "Scraper")
 
-    # ── SOURCE 4: YouTube Hiring Video Descriptions ───────────────────────────
+async def run_youtube_pipeline(db: Session) -> list:
+    log_info("Starting YouTube scraping pipeline...", "Scraper")
     try:
         from scripts.youtube_scraper import scrape_youtube_hiring_videos
         yt_jobs = await scrape_youtube_hiring_videos()
         yt_jobs_new = [j for j in yt_jobs if not is_duplicate(db, j["company_name"], j["title"], j.get("location", ""), j["apply_url"])]
-        saved_yt = _save_jobs_to_db(db, yt_jobs_new, "YouTube")
-        log_info(f"YouTube: {len(yt_jobs_new)} new hiring opportunities found, {saved_yt} saved.", "Scraper")
-        all_scraped.extend(yt_jobs_new)
+        saved = _save_jobs_to_db(db, yt_jobs_new, "YouTube")
+        log_info(f"YouTube complete. Saved {saved} new jobs.", "Scraper")
+        return yt_jobs_new
     except Exception as e:
         log_error(f"YouTube scraper failed: {e}", "Scraper")
-
-    log_info(f"Full scraping pipeline complete. Total new jobs: {len(all_scraped)}", "Scraper")
-    return all_scraped
+        return []
 
 
-    all_scraped = []
-
-    # ── SOURCE 1: LinkedIn Guest Job Search ──────────────────────────────────
-    candidate_links = []
-    seen_urls = set()
-    for keyword in JOB_KEYWORDS[:5]:
-        jobs = await scrape_linkedin_guest(keyword.strip(), "India")
-        for job in jobs:
-            if job["apply_url"] not in seen_urls:
-                seen_urls.add(job["apply_url"])
-                candidate_links.append(job)
-    log_info(f"Gathered {len(candidate_links)} unique links from LinkedIn Guest Search.", "Scraper")
-
-    # Process LinkedIn job listings
-    linkedin_jobs = []
-    for job_info in candidate_links:
-        if is_duplicate(db, job_info["company_name"], job_info["title"], job_info["location"], job_info["apply_url"]):
-            continue
-        desc = fetch_linkedin_description(job_info["apply_url"])
-        if not desc or len(desc.strip()) < 50:
-            continue
-        desc_lower = desc.lower() + " " + job_info["title"].lower()
-        if re.search(r'\b(3|4|5|6|7|8|9|10)\+?\s*(years?|yrs?)\b', desc_lower):
-            log_info(f"Skipping job '{job_info['title']}' at '{job_info['company_name']}' - detected mid/senior exp requirement.", "Scraper")
-            continue
-        job_info["description"] = desc
-        job_info["recruiter_email"] = extract_emails_from_text(desc)
-        job_info["posted_date"] = datetime.datetime.utcnow()
-        linkedin_jobs.append(job_info)
-        await asyncio.sleep(1.5)
-
-    saved_linkedin = _save_jobs_to_db(db, linkedin_jobs, "LinkedIn")
-    log_info(f"LinkedIn Jobs: {len(linkedin_jobs)} new entry-level jobs found, {saved_linkedin} saved.", "Scraper")
-    all_scraped.extend(linkedin_jobs)
-
-    # ── SOURCE 2: LinkedIn Post Scraper ──────────────────────────────────────
+async def run_google_companies_pipeline(db: Session) -> list:
+    log_info("Starting Google Company Search scraping pipeline...", "Scraper")
     try:
-        from scripts.linkedin_post_scraper import scrape_linkedin_posts
-        post_jobs = await scrape_linkedin_posts()
-        # Filter duplicates
-        post_jobs_new = []
-        for job in post_jobs:
-            if not is_duplicate(db, job["company_name"], job["title"], job.get("location", ""), job["apply_url"]):
-                post_jobs_new.append(job)
-        saved_posts = _save_jobs_to_db(db, post_jobs_new, "LinkedIn Post")
-        log_info(f"LinkedIn Posts: {len(post_jobs_new)} new job posts found, {saved_posts} saved.", "Scraper")
-        all_scraped.extend(post_jobs_new)
+        from scripts.career_page_scraper import scrape_google_company_jobs
+        google_jobs = await scrape_google_company_jobs()
+        google_jobs_new = [j for j in google_jobs if not is_duplicate(db, j["company_name"], j["title"], j.get("location", ""), j["apply_url"])]
+        saved = _save_jobs_to_db(db, google_jobs_new, "Google Search")
+        log_info(f"Google Company Search complete. Saved {saved} new jobs.", "Scraper")
+        return google_jobs_new
     except Exception as e:
-        log_error(f"LinkedIn Post scraper failed: {e}", "Scraper")
+        log_error(f"Google Company Search scraper failed: {e}", "Scraper")
+        return []
 
-    # ── SOURCE 3: Company Career Pages ───────────────────────────────────────
+
+async def run_other_boards_pipeline(db: Session) -> list:
+    log_info("Starting Other Job Boards scraping pipeline...", "Scraper")
     try:
-        from scripts.career_page_scraper import scrape_company_career_pages
-        career_jobs = await scrape_company_career_pages()
-        career_jobs_new = []
-        for job in career_jobs:
-            if not is_duplicate(db, job["company_name"], job["title"], job.get("location", ""), job["apply_url"]):
-                career_jobs_new.append(job)
-        saved_career = _save_jobs_to_db(db, career_jobs_new, "Career Page")
-        log_info(f"Career Pages: {len(career_jobs_new)} new fresher jobs found, {saved_career} saved.", "Scraper")
-        all_scraped.extend(career_jobs_new)
+        other_jobs = await scrape_other_job_boards()
+        other_jobs_new = [j for j in other_jobs if not is_duplicate(db, j["company_name"], j["title"], j.get("location", ""), j["apply_url"])]
+        saved = _save_jobs_to_db(db, other_jobs_new, "Job Board")
+        log_info(f"Other Job Boards complete. Saved {saved} new jobs.", "Scraper")
+        return other_jobs_new
     except Exception as e:
-        log_error(f"Career Page scraper failed: {e}", "Scraper")
+        log_error(f"Other Job Boards scraper failed: {e}", "Scraper")
+        return []
 
-    log_info(f"Full scraping pipeline complete. Total new jobs: {len(all_scraped)}", "Scraper")
-    return all_scraped
+
+async def run_scraper_pipeline(db: Session) -> list:
+    """
+    Orchestrates the full scraping pipeline sequentially to coordinate runs.
+    """
+    log_info("Running full coordinated scraping pipeline sequentially...", "Scraper")
+    all_jobs = []
+    
+    all_jobs.extend(await run_linkedin_jobs_pipeline(db))
+    all_jobs.extend(await run_linkedin_posts_pipeline(db))
+    all_jobs.extend(await run_google_companies_pipeline(db))
+    all_jobs.extend(await run_youtube_pipeline(db))
+    all_jobs.extend(await run_other_boards_pipeline(db))
+    
+    return all_jobs
+

@@ -1,4 +1,5 @@
 {
+  "id": "aPc4GDJMDwWiMBn3",
   "name": "AI Job Hunter Workflow",
   "nodes": [
     {
@@ -12,12 +13,12 @@
           ]
         }
       },
-      "id": "e0bfa923-5e7e-43be-8c10-090c8a5a40bb",
+      "id": "node-schedule-trigger",
       "name": "Schedule Trigger (Daily 8 AM)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [
-        380,
+        200,
         240
       ]
     },
@@ -27,12 +28,12 @@
         "url": "http://python-worker:8000/resume/parse",
         "options": {}
       },
-      "id": "e30e6205-0210-449e-b9b5-77ffc2e176df",
+      "id": "node-parse-resume",
       "name": "HTTP Request - Parse Resume",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        600,
+        400,
         240
       ],
       "retryOnFail": true,
@@ -42,17 +43,17 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://python-worker:8000/jobs/scrape",
+        "url": "http://python-worker:8000/jobs/scrape/youtube",
         "options": {
           "timeout": 300000
         }
       },
-      "id": "c62fb2df-7ab3-4700-a010-0b7b134d6ee1",
-      "name": "HTTP Request - Scrape Jobs",
+      "id": "node-scrape-youtube",
+      "name": "HTTP Request - Scrape YouTube",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        820,
+        600,
         240
       ],
       "retryOnFail": true,
@@ -62,17 +63,17 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://python-worker:8000/jobs/ats-match",
+        "url": "http://python-worker:8000/jobs/scrape/google-companies",
         "options": {
-          "timeout": 300000
+          "timeout": 600000
         }
       },
-      "id": "42f9e4bd-12c8-4a92-be22-dfa6a1253457",
-      "name": "HTTP Request - ATS Matching",
+      "id": "node-scrape-google-companies",
+      "name": "HTTP Request - Scrape Google Companies",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1040,
+        800,
         240
       ],
       "retryOnFail": true,
@@ -82,36 +83,83 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://python-worker:8000/reports/excel",
-        "options": {}
+        "url": "http://python-worker:8000/jobs/scrape/linkedin-jobs",
+        "options": {
+          "timeout": 300000
+        }
       },
-      "id": "be5f70a5-f843-4cc0-9289-e16fae54050d",
-      "name": "HTTP Request - Generate Excel",
+      "id": "node-scrape-linkedin-jobs",
+      "name": "HTTP Request - Scrape LinkedIn Jobs",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1260,
+        1000,
         240
-      ]
+      ],
+      "retryOnFail": true,
+      "maxRetries": 2,
+      "delayBetweenRetries": 10000
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://python-worker:8000/notifications/send",
-        "options": {}
+        "url": "http://python-worker:8000/jobs/scrape/linkedin-posts",
+        "options": {
+          "timeout": 300000
+        }
       },
-      "id": "18f9e612-e565-4f40-8798-e76fae54060e",
-      "name": "HTTP Request - Send Notifications",
+      "id": "node-scrape-linkedin-posts",
+      "name": "HTTP Request - Scrape LinkedIn Posts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1480,
+        1200,
+        240
+      ],
+      "retryOnFail": true,
+      "maxRetries": 2,
+      "delayBetweenRetries": 10000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/jobs/scrape/other-boards",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "node-scrape-other-boards",
+      "name": "HTTP Request - Scrape Other Boards",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1400,
+        240
+      ],
+      "retryOnFail": true,
+      "maxRetries": 2,
+      "delayBetweenRetries": 10000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://python-worker:8000/jobs/match-and-notify",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "node-match-and-notify",
+      "name": "HTTP Request - Match and Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1600,
         240
       ]
     },
     {
       "parameters": {},
-      "id": "e843c0a5-f892-4cc0-9289-e16fae54050d",
+      "id": "node-error-trigger",
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
@@ -126,7 +174,7 @@
         "url": "http://python-worker:8000/health",
         "options": {}
       },
-      "id": "18e9a6bc-e565-4f40-8798-e76fae54060e",
+      "id": "node-log-error",
       "name": "Log Error to Worker Health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
@@ -152,40 +200,62 @@
       "main": [
         [
           {
-            "node": "HTTP Request - Scrape Jobs",
+            "node": "HTTP Request - Scrape YouTube",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request - Scrape Jobs": {
+    "HTTP Request - Scrape YouTube": {
       "main": [
         [
           {
-            "node": "HTTP Request - ATS Matching",
+            "node": "HTTP Request - Scrape Google Companies",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request - ATS Matching": {
+    "HTTP Request - Scrape Google Companies": {
       "main": [
         [
           {
-            "node": "HTTP Request - Generate Excel",
+            "node": "HTTP Request - Scrape LinkedIn Jobs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request - Generate Excel": {
+    "HTTP Request - Scrape LinkedIn Jobs": {
       "main": [
         [
           {
-            "node": "HTTP Request - Send Notifications",
+            "node": "HTTP Request - Scrape LinkedIn Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Scrape LinkedIn Posts": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Scrape Other Boards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Scrape Other Boards": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Match and Notify",
             "type": "main",
             "index": 0
           }
